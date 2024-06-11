@@ -5,9 +5,11 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/cursor"
 	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/timer"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -22,7 +24,8 @@ var (
 	mainStyle           = lipgloss.NewStyle().MarginLeft(2)
 	focusedButton       = focusedStyle.Copy().Render("[ Submit ]")
 	blurredButton       = fmt.Sprintf("[ %s ]", blurredStyle.Render("Submit"))
-	time                = 0
+	timeoutMinutes      = 0
+	timeoutSeconds      = 0
 )
 
 type model struct {
@@ -112,6 +115,8 @@ func main() {
 
 func updateInputViewKeyHandler(msg tea.Msg, m model) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case timer.TickMsg:
+		return updateTimer(msg, m)
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "esc":
@@ -124,12 +129,15 @@ func updateInputViewKeyHandler(msg tea.Msg, m model) (tea.Model, tea.Cmd) {
 			// If so, exit.
 			if s == "enter" && m.focusIndex == len(m.inputs) {
 				if i, err := strconv.ParseInt(m.inputs[0].Value(), 10, 64); err == nil {
-					time = int(i)
+					timeoutMinutes = int(i)
+					timeoutSeconds = 0
 				}
 
 				// quando o usuario pressionar enter eu preciso mudar a view.
 				m.Timer = true
-				return m, nil
+				return m, tea.Tick(time.Second, func(_ time.Time) tea.Msg {
+					return timer.TickMsg{ID: int(time.Now().Unix()), Timeout: timeoutSeconds != 0 && timeoutSeconds != 0}
+				})
 			}
 
 			// Cycle indexes
@@ -169,8 +177,27 @@ func updateInputViewKeyHandler(msg tea.Msg, m model) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+var lastTime time.Time
+
 func updateTimer(msg tea.Msg, m model) (tea.Model, tea.Cmd) {
-	return m, nil
+	if lastTime.IsZero() {
+		lastTime = time.Now()
+	}
+
+	now := time.Now()
+	elapsedTime := now.Sub(lastTime).Seconds()
+	lastTime = now
+
+	if elapsedTime >= 1 {
+		timeoutSeconds -= int(elapsedTime)
+		if timeoutSeconds < 0 {
+			timeoutMinutes -= 1
+			timeoutSeconds = 59
+		}
+	}
+	return m, tea.Tick(time.Second, func(_ time.Time) tea.Msg {
+		return timer.TickMsg{ID: int(time.Now().Unix()), Timeout: timeoutSeconds != 0 && timeoutSeconds != 0}
+	})
 }
 
 func inputView(m model) string {
@@ -196,5 +223,7 @@ func inputView(m model) string {
 }
 
 func timerView(m model) string {
-	return ""
+	currentTimer := fmt.Sprintf("%02d:%02d", timeoutMinutes, timeoutSeconds)
+	os.WriteFile("sprint.txt", []byte(currentTimer), 0644)
+	return currentTimer
 }
